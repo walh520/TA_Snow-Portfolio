@@ -1,0 +1,53 @@
+#ifndef TA_SNOW_POWDER_MATH_USH
+#define TA_SNOW_POWDER_MATH_USH
+// Numerical excerpt from TASnowFX.usf. No engine includes, scene textures,
+// render entry points, uniforms, resources or RDG bindings.
+uint SnowHash(uint x) { x^=x>>16; x*=0x7feb352du; x^=x>>15; x*=0x846ca68bu; return x^(x>>16); }
+float Rand(uint x) { return float(SnowHash(x)&0xffffffu)/16777216.; }
+float HG(float cosine,float g) { return (1-g*g)/(12.5663706*pow(max(1+g*g-2*g*cosine,1.e-4),1.5)); }
+void Integrate(inout float3 scatter,inout float trans,float3 radiance,float phase,float extinction,float lengthCm)
+{
+    float segment=exp(-max(extinction,0)*max(lengthCm,0)*.01);
+    scatter+=trans*radiance*phase*(1-segment); trans*=segment;
+}
+// Trilinear value noise and two-phase advection adapted from Realtime Fog
+// FineDensity; bounded local detail, no persistent 3D field or readback.
+float DetailNoise(float3 x,uint seed)
+{
+    int3 base=int3(floor(x)); float3 f=frac(x); f=f*f*(3-2*f); float value=0;
+    [unroll] for(uint k=0;k<8;k++)
+    {
+        int3 o=int3(k&1,(k>>1)&1,(k>>2)&1); uint3 cell=asuint(base+o);
+        uint hash=cell.x*73856093u^cell.y*19349663u^cell.z*83492791u^seed;
+        float3 w=lerp(1-f,f,float3(o)); value+=w.x*w.y*w.z*(2*Rand(hash)-1);
+    }
+    return value;
+}
+float FineDensity(float3 local,float4 Detail,uint seed)
+{
+    if(Detail.z<=0) return 1;
+    float phase=frac(Detail.w*.5),second=frac(phase+.5);
+    float weight=1-abs(2*phase-1);
+    float3 flow=float3(.6,-.25,.4)*Detail.y;
+    float3 p=local/Detail.y;
+    float n=weight*DetailNoise(p-flow/Detail.y*(phase*2),seed)+
+        (1-weight)*DetailNoise(p-flow/Detail.y*(second*2),seed);
+    // Broad billows with an independently advected fine octave.
+    n=.75*n+.25*DetailNoise(p*2.03+float3(0,0,-Detail.w*.35),seed^0x68bc21ebu);
+    return max(0,1+Detail.z*n*1.5);
+}
+float3 FogCenter(float4 P,float4 Motion,float4 Life,float4 Pop,float4 Detail)
+{
+    float t=Detail.w,seed=frac(Life.z*.61803399)*6.2831853;
+    float fade=sin(saturate(P.w/Life.x)*3.14159265);
+    float3 roll=float3(sin(t*2.1+seed),cos(t*1.7+seed),sin(t*1.3+seed*.7));
+    return P.xyz+Motion.xyz*P.w*.25+float3(0,0,Motion.w*.25+P.w*15)+roll*Pop.w*fade;
+}
+float3 FogRadius(float4 P,float4 Motion,float4 Life,float4 Detail)
+{
+    float seed=frac(Life.z*.381966)*6.2831853;
+    float wobble=.1*sin(Detail.w*2+seed);
+    return float3(Motion.w*(1+2*P.w)*(1+wobble),Motion.w*(1+2*P.w)*(1-wobble),Motion.w*.5+P.w*30);
+}
+
+#endif

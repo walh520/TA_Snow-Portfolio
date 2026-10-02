@@ -1,0 +1,9 @@
+Binaries/
+Intermediate/
+Content/
+Saved/
+*.uasset
+*.umap
+*.dll
+*.pdb
+*.exe
